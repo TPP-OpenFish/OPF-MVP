@@ -2,9 +2,6 @@ name: Manual Component Deployment
 
 on:
   workflow_dispatch:
-    permissions:
-      contents: read
-      packages: write
     inputs:
       component:
         description: 'Componente a desplegar'
@@ -23,6 +20,10 @@ on:
           - STG
           - PRD
 
+# Permisos globales en la raíz del documento
+permissions:
+  contents: read
+  packages: write
 
 jobs:
   # Deploya el app
