@@ -1,0 +1,8 @@
+# Regla por defecto: Todos los PRs requieren revisión de al menos un dev
+* @patricioperrone
+
+# Reglas específicas por componente
+/gateway/ @patricioperrone
+/app/ @patricioperrone
+/embedded/ @patricioperrone
+/social_app/ @patricioperrone
