@@ -1,4 +1,4 @@
-name: Reusable Docker Build & Publish (Agnostic)
+name: Reusable Docker Build & Publish
 
 on:
   workflow_call:
@@ -27,6 +27,12 @@ jobs:
       - name: Checkout del código
         uses: actions/checkout@v4
 
+      # Normalización de nombre de imagen a minúsculas para cumplir con OCI/Docker
+      - name: Normalize Repository Name
+        run: |
+          LOWER_REPO=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE_BASE=ghcr.io/$LOWER_REPO/${{ inputs.component_name }}" >> $GITHUB_ENV
+        
       # LOGIN
       # un token que GitHub inyecta automticamente
       - name: Log in to the Container registry
@@ -45,7 +51,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}/${{ inputs.component_name }}
+          images: ${{ env.IMAGE_BASE }}
           tags: |
             type=sha,format=long
             type=raw,value=latest,enable=${{ inputs.target_env == 'PRD' }}
@@ -65,7 +71,7 @@ jobs:
       - name: Container Security Scan (Trivy)
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ghcr.io/${{ github.repository }}/${{ inputs.component_name }}:sha-${{ github.sha }}
+          image-ref: ${{ env.IMAGE_BASE }}:sha-${{ github.sha }}
           format: 'table'
           exit-code: '1'
           severity: 'CRITICAL,HIGH'
@@ -75,6 +81,6 @@ jobs:
         run: |
           echo "========================================================="
           echo "✅ Imagen Docker construida y analizada con éxito."
-          echo "📦 Guardada en: ghcr.io/${{ github.repository }}/${{ inputs.component_name }}:sha-${{ github.sha }}"
+          echo "📦 Guardada en: ${{ env.IMAGE_BASE }}:sha-${{ github.sha }}"
           echo "🚀 Simulación: Desplegando en infraestructura de ${{ inputs.target_env }}..."
           echo "========================================================="
