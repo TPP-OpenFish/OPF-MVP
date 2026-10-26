@@ -1,0 +1,80 @@
+name: Reusable Docker Build & Publish (Agnostic)
+
+on:
+  workflow_call:
+    inputs:
+      component_name:
+        description: 'Nombre del componente (ej. gateway, app, embedded)'
+        required: true
+        type: string
+      target_env:
+        description: 'Entorno de destino (STG o PRD)'
+        required: true
+        type: string
+
+jobs:
+  build-scan-and-publish:
+    name: Build & Publish ${{ inputs.component_name }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target_env }}
+    
+    # Permisos nativos para interactuar con el registro de GitHub
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      # LOGIN
+      # un token que GitHub inyecta automticamente
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # CACHE DE DOCKER
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # METADATA, Nombres y Tags automaticos
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/${{ inputs.component_name }}
+          tags: |
+            type=sha,format=long
+            type=raw,value=latest,enable=${{ inputs.target_env == 'PRD' }}
+
+      # BUILD y PUSH A GCR
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./${{ inputs.component_name }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Escaneo de vulnerabilidades
+      - name: Container Security Scan (Trivy)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ghcr.io/${{ github.repository }}/${{ inputs.component_name }}:sha-${{ github.sha }}
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
+
+      # MOCK DEL DESPLIEGUE CLOUD
+      - name: Deploy Placeholder
+        run: |
+          echo "========================================================="
+          echo "✅ Imagen Docker construida y analizada con éxito."
+          echo "📦 Guardada en: ghcr.io/${{ github.repository }}/${{ inputs.component_name }}:sha-${{ github.sha }}"
+          echo "🚀 Simulación: Desplegando en infraestructura de ${{ inputs.target_env }}..."
+          echo "========================================================="

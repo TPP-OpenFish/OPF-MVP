@@ -1,0 +1,57 @@
+name: Manual Component Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      component:
+        description: 'Componente a desplegar'
+        required: true
+        type: choice
+        options:
+          - gateway
+          - app
+          - embedded
+          - social_app
+      environment:
+        description: 'Entorno de destino'
+        required: true
+        type: choice
+        options:
+          - STG
+          - PRD
+
+
+jobs:
+  # Deploya el app
+  deploy-app:
+    if: ${{ inputs.component == 'app' }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+    - name: Simulando Despliegue
+      run: echo "Iniciando despliegue del componente ${{inputs.component}} version ${{ github.ref_name }} hacia el entorno ${{inputs.environment}}"
+
+  # Deploya el embebido
+  deploy-embedded:
+    if: ${{ inputs.component == 'embedded' }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+    - name: Simulando Despliegue
+      run: echo "Iniciando despliegue del componente ${{inputs.component}} version ${{ github.ref_name }} hacia el entorno ${{inputs.environment}}"
+
+  # Deploya el gateway
+  deploy-gtw:
+    if: ${{ inputs.component == 'gateway' }}
+    uses: ./.github/workflows/reusable-docker-deploy.yml
+    with:
+      component_name: ${{ inputs.component }}
+      target_env: ${{ inputs.environment }}
+
+  # Deploya la red social
+  deploy-social_app:
+    if: ${{ inputs.component == 'social_app' }}
+    uses: ./.github/workflows/reusable-docker-deploy.yml
+    with:
+      component_name: ${{ inputs.component }}
+      target_env: ${{ inputs.environment }}
