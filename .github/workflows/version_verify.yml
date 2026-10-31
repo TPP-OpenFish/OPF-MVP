@@ -1,0 +1,56 @@
+name: CI - Verificacion de Version
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  check-versions:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del codigo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Necesario para comparar con main
+
+      - name: Verificar cambios de version en subproyectos
+        run: |
+          # lista de todos los archivos cambiados en el Pull Request
+          CHANGED_FILES=$(git diff --name-only origin/main...HEAD)
+          
+          # nuestros subproyectos
+          COMPONENTS="gateway app embedded social_app"
+          
+          ERROR_COUNT=0
+          
+          # iterar por cada subproyecto
+          for COMPONENT in $COMPONENTS; do
+            echo "🔍 Analizando: $COMPONENT"
+            
+            # Buscar si se modificaron archivos que NO sean version.yml en la carpeta del componente
+            CODE_CHANGED=$(echo "$CHANGED_FILES" | grep -E "^$COMPONENT/" | grep -v "^$COMPONENT/version.yml" || true)
+            
+            # Buscar si se modifico el version.yml de ese componente
+            VERSION_CHANGED=$(echo "$CHANGED_FILES" | grep "^$COMPONENT/version.yml" || true)
+            
+            if [ -n "$CODE_CHANGED" ] && [ -z "$VERSION_CHANGED" ]; then
+              echo "::error file=$COMPONENT/version.yml::❌ Detectados cambios de codigo en '$COMPONENT/', pero el archivo 'version.yml' no fue modificado."
+              ERROR_COUNT=$((ERROR_COUNT + 1))
+            elif [ -n "$CODE_CHANGED" ] && [ -n "$VERSION_CHANGED" ]; then
+              echo "✅ Cambios de codigo detectados en '$COMPONENT/', y 'version.yml' actualizado correctamente."
+            elif [ -z "$CODE_CHANGED" ] && [ -n "$VERSION_CHANGED" ]; then
+              echo "⚠️ Solo se modifico 'version.yml' en '$COMPONENT/' (Sin cambios en codigo)."
+            else
+              echo "⚪ Sin cambios en '$COMPONENT'."
+            fi
+            echo "----------------------------------------"
+          done
+          
+          # si hubo algun error, falla el pipeline del PR
+          if [ $ERROR_COUNT -gt 0 ]; then
+            echo "❌ Fallo la validacion: Debes actualizar el version.yml en los componentes modificados."
+            exit 1
+          fi
+          
+          echo "✅ Todos los componentes cumplen la regla de version."
