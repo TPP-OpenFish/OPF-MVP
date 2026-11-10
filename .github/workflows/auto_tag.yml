@@ -1,0 +1,58 @@
+name: Create Component Tags
+
+on:
+  workflow_dispatch:
+
+jobs:
+  create-tags:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get Components and Create Tags
+        run: |
+          echo "### Sincronización de Tags" >> $GITHUB_STEP_SUMMARY
+          
+          VERSION_CONFIGS=$(find . -name "version.yml" -not -path "*/.*" -not -path "./hw-routines-main/*")
+          
+          for config in $VERSION_CONFIGS; do
+            COMPONENT_DIR=$(dirname "$config" | sed 's|^\./||')
+
+            # Extraer el nombre del componente y versión
+            COMPONENT_NAME=$(yq eval '.name' "$config")
+            VERSION=$(yq eval '.version' "$config")
+            
+            # Validación: Si no hay nombre definido, usamos el nombre del directorio como backup
+            if [ "$COMPONENT_NAME" == "null" ] || [ -z "$COMPONENT_NAME" ]; then
+              echo "⚠️ $COMPONENT_DIR: No tiene definido 'name' en el YAML. Usando nombre de carpeta..."
+              COMPONENT_NAME=$COMPONENT_DIR
+            fi
+      
+            # Si la variable 'version' no está presente, saltamos
+            if [ "$VERSION" == "null" ] || [ -z "$VERSION" ]; then
+              echo "⚠️ $COMPONENT_NAME: No tiene definida la clave 'version'. Saltando..." >> $GITHUB_STEP_SUMMARY
+              continue
+            fi
+            
+            # Format tag name
+            TAG_NAME="${COMPONENT_NAME}/${VERSION}"
+            
+            # Check if tag already exists in the repo
+            if git rev-parse -q --verify "refs/tags/$TAG_NAME" >/dev/null 2>&1; then
+              echo "✅ $TAG_NAME: Ya existe. No se requiere acción." >> $GITHUB_STEP_SUMMARY
+            else
+              echo "🚀 $TAG_NAME: Nuevo tag detectado. Creando..." >> $GITHUB_STEP_SUMMARY
+              
+              git config user.name "github-actions[bot]"
+              git config user.email "github-actions[bot]@users.noreply.github.com"
+              
+              git tag "$TAG_NAME"
+              git push origin "$TAG_NAME"
+            fi
+          done
+
