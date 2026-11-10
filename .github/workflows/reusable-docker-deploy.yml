@@ -7,6 +7,11 @@ on:
         description: 'Nombre del componente (ej. gateway, app, embedded)'
         required: true
         type: string
+      version:
+        description: 'Versión del componente extraída del tag (ej. v0.0.1)'
+        required: false
+        type: string
+        default: ''
       target_env:
         description: 'Entorno de destino (STG o PRD)'
         required: true
@@ -14,7 +19,7 @@ on:
 
 jobs:
   build-scan-and-publish:
-    name: Build & Publish ${{ inputs.component_name }}
+    name: Build & Publish ${{ inputs.component_name }} (${{ inputs.target_env }})
     runs-on: ubuntu-latest
     environment: ${{ inputs.target_env }}
     
@@ -26,6 +31,8 @@ jobs:
     steps:
       - name: Checkout del código
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
 
       # Normalización de nombre de imagen a minúsculas para cumplir con OCI/Docker
       - name: Normalize Repository Name
@@ -54,6 +61,7 @@ jobs:
           images: ${{ env.IMAGE_BASE }}
           tags: |
             type=sha,format=long
+            type=raw,value=${{ inputs.version }},enable=${{ inputs.version != '' }}
             type=raw,value=latest,enable=${{ inputs.target_env == 'PRD' }}
 
       # BUILD y PUSH A GCR

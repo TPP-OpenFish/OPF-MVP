@@ -1,24 +1,20 @@
 name: Manual Component Deployment
+run-name: >-
+  Deploy ${{ github.ref_name }} to 
+  ${{ (github.event.inputs.deploy_in_stg == 'true' && 'STG ' || '') }}${{ (github.event.inputs.deploy_in_prd == 'true' && 'PRD' || '') }}
 
 on:
   workflow_dispatch:
     inputs:
-      component:
-        description: 'Componente a desplegar'
-        required: true
-        type: choice
-        options:
-          - gateway
-          - app
-          - embedded
-          - social_app
-      environment:
-        description: 'Entorno de destino'
-        required: true
-        type: choice
-        options:
-          - STG
-          - PRD
+      deploy_in_stg:
+        description: 'Desplegar en STG'
+        type: boolean
+        default: true
+
+      deploy_in_prd:
+        description: 'Desplegar en PRD'
+        type: boolean
+        default: false
 
 # Permisos globales en la raíz del documento
 permissions:
@@ -26,36 +22,125 @@ permissions:
   packages: write
 
 jobs:
+  validate-inputs:
+    runs-on: ubuntu-latest
+    outputs:
+      selected_envs: ${{ steps.filter.outputs.envs }}
+      component_name: ${{ steps.get-component.outputs.component_name }}
+      version: ${{ steps.get-component.outputs.version }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Get Component From Tag
+        id: get-component
+        run: |
+          TAG="${{ github.ref_name }}"
+          COMPONENT_NAME="${TAG%/*}"
+          VERSION="${TAG#*/}"
+
+          echo "### Extracción del tag" >> $GITHUB_STEP_SUMMARY
+
+          if [[ "$TAG" == "$COMPONENT_NAME" ]] || [[ -z "$VERSION" ]]; then
+            echo "❌ Error: El formato del tag '$TAG' es incorrecto (debe ser componente/version) o estás ejecutando desde una rama." >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
+          # Validación física: ¿Existe la carpeta del componente?
+          if [ ! -d "$COMPONENT_NAME" ]; then
+            echo "❌ Error: La carpeta '$COMPONENT_NAME' extraída del tag no existe en el repositorio." >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
+          echo "✅ Componente detectado: **$COMPONENT_NAME** (versión **$VERSION**)" >> $GITHUB_STEP_SUMMARY
+          echo "component_name=$COMPONENT_NAME" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Get Selected Envs
+        id: filter
+        run: |
+          ENVS=()
+          if [ "${{ github.event.inputs.deploy_in_stg }}" == "true" ]; then ENVS+=("STG"); fi
+          if [ "${{ github.event.inputs.deploy_in_prd }}" == "true" ]; then ENVS+=("PRD"); fi
+
+          if [ ${#ENVS[@]} -eq 0 ]; then
+            echo "❌ Error: No se ha seleccionado ningún entorno para el despliegue." >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
+          # Convertimos el array de Bash a un JSON para GitHub Matrix
+          JSON_ENVS=$(printf '%s\n' "${ENVS[@]}" | jq -R . | jq -s -c .)
+          echo "envs=$JSON_ENVS" >> $GITHUB_OUTPUT
+          echo "- Entornos seleccionados: $JSON_ENVS" >> $GITHUB_STEP_SUMMARY
+
   # Deploya el app
   deploy-app:
-    if: ${{ inputs.component == 'app' }}
+    name: Deploy app (${{ needs.validate-inputs.outputs.version }}) to ${{ matrix.env_target }}
+    needs: validate-inputs
+    if: needs.validate-inputs.outputs.component_name == 'app' && needs.validate-inputs.outputs.selected_envs != '[]'
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
+    strategy:
+      fail-fast: false
+      matrix:
+        env_target: ${{ fromJson(needs.validate-inputs.outputs.selected_envs) }}
+    environment: ${{ matrix.env_target }}
     steps:
-    - name: Simulando Despliegue
-      run: echo "Iniciando despliegue del componente ${{inputs.component}} version ${{ github.ref_name }} hacia el entorno ${{inputs.environment}}"
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+      - name: Simulando Despliegue
+        run: echo "Iniciando despliegue del componente ${{ needs.validate-inputs.outputs.component_name }} version ${{ needs.validate-inputs.outputs.version }} hacia el entorno ${{ matrix.env_target }}"
 
   # Deploya el embebido
   deploy-embedded:
-    if: ${{ inputs.component == 'embedded' }}
+    name: Deploy embedded (${{ needs.validate-inputs.outputs.version }}) to ${{ matrix.env_target }}
+    needs: validate-inputs
+    if: needs.validate-inputs.outputs.component_name == 'embedded' && needs.validate-inputs.outputs.selected_envs != '[]'
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
+    strategy:
+      fail-fast: false
+      matrix:
+        env_target: ${{ fromJson(needs.validate-inputs.outputs.selected_envs) }}
+    environment: ${{ matrix.env_target }}
     steps:
-    - name: Simulando Despliegue
-      run: echo "Iniciando despliegue del componente ${{inputs.component}} version ${{ github.ref_name }} hacia el entorno ${{inputs.environment}}"
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+      - name: Simulando Despliegue
+        run: echo "Iniciando despliegue del componente ${{ needs.validate-inputs.outputs.component_name }} version ${{ needs.validate-inputs.outputs.version }} hacia el entorno ${{ matrix.env_target }}"
 
   # Deploya el gateway
   deploy-gtw:
-    if: ${{ inputs.component == 'gateway' }}
+    name: Deploy gateway (${{ needs.validate-inputs.outputs.version }}) to ${{ matrix.env_target }}
+    needs: validate-inputs
+    if: needs.validate-inputs.outputs.component_name == 'gateway' && needs.validate-inputs.outputs.selected_envs != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        env_target: ${{ fromJson(needs.validate-inputs.outputs.selected_envs) }}
     uses: ./.github/workflows/reusable-docker-deploy.yml
     with:
-      component_name: ${{ inputs.component }}
-      target_env: ${{ inputs.environment }}
+      component_name: ${{ needs.validate-inputs.outputs.component_name }}
+      version: ${{ needs.validate-inputs.outputs.version }}
+      target_env: ${{ matrix.env_target }}
+    secrets: inherit
 
   # Deploya la red social
   deploy-social_app:
-    if: ${{ inputs.component == 'social_app' }}
+    name: Deploy social_app (${{ needs.validate-inputs.outputs.version }}) to ${{ matrix.env_target }}
+    needs: validate-inputs
+    if: needs.validate-inputs.outputs.component_name == 'social_app' && needs.validate-inputs.outputs.selected_envs != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        env_target: ${{ fromJson(needs.validate-inputs.outputs.selected_envs) }}
     uses: ./.github/workflows/reusable-docker-deploy.yml
     with:
-      component_name: ${{ inputs.component }}
-      target_env: ${{ inputs.environment }}
+      component_name: ${{ needs.validate-inputs.outputs.component_name }}
+      version: ${{ needs.validate-inputs.outputs.version }}
+      target_env: ${{ matrix.env_target }}
+    secrets: inherit

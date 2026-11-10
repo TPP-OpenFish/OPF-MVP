@@ -1,0 +1,118 @@
+name: Validate Components
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  detect-components:
+    runs-on: ubuntu-latest
+    outputs:
+      # Exportamos la lista para que el siguiente job la use como matriz
+      component_matrix: ${{ steps.filter.outputs.matrix }}
+      has_changes: ${{ steps.filter.outputs.has_changes }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Get Changed Files
+        id: changed-files
+        uses: tj-actions/changed-files@v47
+
+      - name: Map Files to Component Directories
+        id: filter
+        run: |
+          # 1. Tomamos la lista de archivos cambiados (separados por espacio)
+          CHANGED_FILES="${{ steps.changed-files.outputs.all_modified_files }}"
+          
+          COMPONENTS=()
+          for file in $CHANGED_FILES; do
+            # Ignorar carpeta de referencia hw-routines-main si existiera
+            if [[ "$file" == hw-routines-main/* ]]; then
+              continue
+            fi
+
+            # 2. Buscamos el version.yml más cercano hacia arriba desde el archivo cambiado
+            DIR=$(dirname "$file")
+            while [[ "$DIR" != "." && "$DIR" != "/" ]]; do
+              if [[ -f "$DIR/version.yml" ]]; then
+                COMPONENTS+=("$DIR")
+                break
+              fi
+              DIR=$(dirname "$DIR")
+            done
+          done
+
+          # 3. Solo procesamos si el array NO está vacío
+          if [[ ${#COMPONENTS[@]} -gt 0 ]]; then
+            # Eliminamos duplicados y convertimos a JSON
+            UNIQUE_COMPONENTS=$(printf '%s\n' "${COMPONENTS[@]}" | sort -u | jq -R . | jq -s -c .)
+            
+            echo "Componentes detectados: $UNIQUE_COMPONENTS"
+            echo "matrix=$UNIQUE_COMPONENTS" >> $GITHUB_OUTPUT
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "No se detectaron componentes con cambios."
+            echo "matrix=[]" >> $GITHUB_OUTPUT
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          fi
+
+  validate_version_change:
+    needs: detect-components
+    if: needs.detect-components.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        component_path: ${{ fromJson(needs.detect-components.outputs.component_matrix) }}
+
+    name: Validate version change (${{ matrix.component_path }})
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate version change in ${{ matrix.component_path }}
+        run: |
+          CONFIG_FILE="${{ matrix.component_path }}/version.yml"
+          COMPONENT_NAME=$(yq eval '.name' "$CONFIG_FILE")
+          VERSION=$(yq eval '.version' "$CONFIG_FILE")
+
+          if [ "$COMPONENT_NAME" == "null" ] || [ -z "$COMPONENT_NAME" ]; then
+            COMPONENT_NAME="${{ matrix.component_path }}"
+          fi
+
+          if [ "$VERSION" == "null" ] || [ -z "$VERSION" ]; then
+            echo "::error file=$CONFIG_FILE::File has no version defined. Cannot validate tag. Please define 'version' inside $CONFIG_FILE."
+            exit 1
+          fi
+
+          TAG_NAME="${COMPONENT_NAME}/${VERSION}"
+
+          # Verificar si el tag ya existe en el repositorio remoto usando ls-remote
+          if git ls-remote --tags origin | grep -q "refs/tags/$TAG_NAME$"; then
+            echo "::error file=$CONFIG_FILE::Version $VERSION of component $COMPONENT_NAME already exists as a tag. Please bump the version in $CONFIG_FILE."
+            exit 1
+          else
+            echo "✅ Version bump for component $COMPONENT_NAME ($TAG_NAME) is valid."
+          fi
+
+      - name: Request Changes on PR
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.pulls.createReview({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              event: 'REQUEST_CHANGES',
+              body: `❌ **Version Validation Failed for component \`${{ matrix.component_path }}\`!**\n\nThe version in \`${{ matrix.component_path }}/version.yml\` either already exists as a tag or wasn't bumped.\n\nPlease update the \`version\` field and push your changes to re-run the validation.`
+            })
+
